@@ -1,63 +1,55 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, authenticate, logout
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponseForbidden
 from django.core.paginator import Paginator
 from django.db.models import Q
-
-from .forms import RegisterForm, ProductForm
+from django.http import HttpResponseForbidden
+from .forms import ProductForm, RegisterForm
 from .models import Product, Cart, CartItem, Category
 
-# ==========================================
-# 🏠 Catálogo y Vistas Públicas (Búsqueda, Filtros y Paginación)
-# ==========================================
-
+# =========================
+# 🏠 Página Principal (Home)
+# =========================
 def home(request):
     query = request.GET.get('q')
     category_id = request.GET.get('category')
 
-    # Base de la consulta optimizada (Evita problema N+1)
-    products = Product.objects.select_related('owner').prefetch_related('categories').all()
+    # Se agrega .order_by('-id') para solucionar el UnorderedObjectListWarning
+    products = Product.objects.select_related(
+        'owner'
+    ).prefetch_related(
+        'categories'
+    ).all().order_by('-id')
 
-    # =========================
-    # 🔎 Búsqueda por Texto
-    # =========================
+    # 🔎 Búsqueda
     if query:
         products = products.filter(
             Q(name__icontains=query) |
             Q(description__icontains=query)
         )
 
-    # =========================
-    # 🏷️ Filtro por Categoría
-    # =========================
+    # 🏷️ Filtro categoría
     if category_id:
         products = products.filter(
             categories__id=category_id
         )
 
-    # =========================
-    # 📄 Paginación (6 productos por página)
-    # =========================
+    # 📄 Paginación
     paginator = Paginator(products, 6)
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
 
-    # Necesario para pintar los botones de filtro en la barra lateral o barra de búsqueda
     categories = Category.objects.all()
 
-    return render(request, 'marketplace/home.html', {
+    return render(request, 'store/home.html', {
         'page_obj': page_obj,
-        'categories': categories,
-        'query': query,
-        'current_category': category_id
+        'categories': categories
     })
 
 
-# ==========================================
-# 🔐 Autenticación de Usuarios
-# ==========================================
-
+# =========================
+# 🔐 Autenticación
+# =========================
 def register(request):
     if request.method == 'POST':
         form = RegisterForm(request.POST)
@@ -68,24 +60,21 @@ def register(request):
     else:
         form = RegisterForm()
 
-    return render(request, 'marketplace/register.html', {'form': form})
+    return render(request, 'store/register.html', {'form': form})
 
 
 def login_view(request):
-    error_msg = None
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
 
         user = authenticate(request, username=username, password=password)
 
-        if user is not None:
+        if user:
             login(request, user)
             return redirect('home')
-        else:
-            error_msg = "Usuario o contraseña incorrectos."
 
-    return render(request, 'marketplace/login.html', {'error': error_msg})
+    return render(request, 'store/login.html')
 
 
 def logout_view(request):
@@ -93,35 +82,36 @@ def logout_view(request):
     return redirect('home')
 
 
-# ==========================================
-# 📊 Panel de Control y CRUD (Solo Vendedores)
-# ==========================================
-
+# =========================
+# 📊 Dashboard Vendedor
+# =========================
 @login_required
 def dashboard(request):
     if not request.user.is_seller:
         return HttpResponseForbidden("No tienes permisos")
 
-    products = Product.objects.filter(owner=request.user)
+    products = Product.objects.filter(owner=request.user).order_by('-id')
 
     return render(request, 'store/dashboard.html', {
         'products': products
     })
 
 
+# =========================
+# 📦 Gestión de Productos
+# =========================
 @login_required
 def product_create(request):
     if not request.user.is_seller:
         return HttpResponseForbidden("Solo vendedores")
 
-    form = ProductForm(request.POST or None)
+    form = ProductForm(request.POST or None, request.FILES or None)
 
-    if request.method == 'POST' and form.is_valid():
+    if form.is_valid():
         product = form.save(commit=False)
         product.owner = request.user
         product.save()
         form.save_m2m()
-
         return redirect('dashboard')
 
     return render(request, 'store/product_form.html', {'form': form})
@@ -134,13 +124,13 @@ def product_update(request, pk):
     if product.owner != request.user:
         return HttpResponseForbidden("No puedes editar este producto")
 
-    form = ProductForm(request.POST or None, instance=product)
+    form = ProductForm(request.POST or None, request.FILES or None, instance=product)
 
-    if request.method == 'POST' and form.is_valid():
+    if form.is_valid():
         form.save()
         return redirect('dashboard')
 
-    return render(request, 'store/product_form.html', {'form': form, 'product': product})
+    return render(request, 'store/product_form.html', {'form': form})
 
 
 @login_required
@@ -157,32 +147,34 @@ def product_delete(request, pk):
     return render(request, 'store/product_confirm_delete.html', {'product': product})
 
 
-# ==========================================
-# 🛒 Carrito de Compras (Solo Compradores Logueados)
-# ==========================================
-
+# =========================
+# 🛒 Carrito de Compras
+# =========================
 @login_required
 def cart_detail(request):
-    cart, created = Cart.objects.get_or_create(user=request.user)
-    cart_items = cart.cartitem_set.select_related('product')
+    cart, created = Cart.objects.get_or_create(
+        user=request.user
+    )
 
-    return render(request, 'marketplace/cart_detail.html', {
-        'cart': cart,
-        'cart_items': cart_items
+    return render(request, 'store/cart_detail.html', {
+        'cart': cart
     })
 
 
 @login_required
 def add_to_cart(request, product_id):
-    cart, created = Cart.objects.get_or_create(user=request.user)
+    cart, created = Cart.objects.get_or_create(
+        user=request.user
+    )
+
     product = get_object_or_404(Product, id=product_id)
 
-    cart_item, item_created = CartItem.objects.get_or_create(
+    cart_item, created = CartItem.objects.get_or_create(
         cart=cart,
         product=product
     )
 
-    if not item_created:
+    if not created:
         cart_item.quantity += 1
         cart_item.save()
 
@@ -196,6 +188,7 @@ def remove_from_cart(request, item_id):
         id=item_id,
         cart__user=request.user
     )
+
     item.delete()
 
     return redirect('cart_detail')
@@ -211,13 +204,14 @@ def update_cart_item(request, item_id):
 
     if request.method == 'POST':
         try:
-            quantity = int(request.POST.get('quantity', 1))
-            if quantity > 0:
-                item.quantity = quantity
-                item.save()
-            else:
-                item.delete()
-        except (ValueError, TypeError):
-            pass
+            quantity = int(request.POST.get('quantity', 0))
+        except ValueError:
+            quantity = 0
+
+        if quantity > 0:
+            item.quantity = quantity
+            item.save()
+        else:
+            item.delete()
 
     return redirect('cart_detail')
