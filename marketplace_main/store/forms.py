@@ -1,13 +1,15 @@
 from django import forms
-from django.contrib.auth.forms import UserCreationForm
-from .models import User
+from .models import User, Product
 
-class RegisterForm(UserCreationForm):
-    email = forms.EmailField(required=True)
-    is_seller = forms.BooleanField(required=False)
+class RegisterForm(forms.ModelForm):
+    # (Tu código de RegisterForm aquí...)
+    pass
 
-    class Meta(UserCreationForm.Meta):
-        model = User
-        # Solo agregamos 'email' y 'is_seller'. 
-        # UserCreationForm ya hereda y maneja las contraseñas automáticamente.
-        fields = UserCreationForm.Meta.fields + ('email', 'is_seller')
+# ASEGÚRATE DE QUE ESTO ESTÉ ESCRITO ASÍ:
+class ProductForm(forms.ModelForm):
+    class Meta:
+        model = Product
+        fields = ['name', 'description', 'price', 'stock', 'categories']
+        widgets = {
+            'categories': forms.CheckboxSelectMultiple()
+        }
